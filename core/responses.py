@@ -16,8 +16,7 @@ HEADER_NAME_PATTERN = re.compile(
 )
 
 
-class ResponseParseError(Exception):
-    pass
+from core.errors import ResponseParseError
 
 
 @dataclass(frozen=True)
