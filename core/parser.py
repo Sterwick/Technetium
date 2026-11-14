@@ -14,8 +14,7 @@ HEADER_NAME_PATTERN = re.compile(
 )
 
 
-class RequestParseError(Exception):
-    pass
+from core.errors import RequestParseError
 
 
 def parse_request(raw_data: bytes):
