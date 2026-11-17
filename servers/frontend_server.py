@@ -148,7 +148,7 @@ def _host_is_public(host, port):
     return bool(addresses) and all(address.is_global for address in addresses)
 
 
-def _read_response(url, max_bytes):
+def _read_response(url, max_bytes, referer=None):
     current_url = validate_url(url)
     visited = set()
     for _ in range(MAX_REDIRECTS + 1):
@@ -157,12 +157,18 @@ def _read_response(url, max_bytes):
             raise ValueError('The destination returned a redirect loop.')
         visited.add(current_url)
 
-        request = Request(current_url, headers={
-            'User-Agent': 'Technetium/1.0',
-            'Accept': 'text/html, text/css, image/*, */*;q=0.1',
+        request_headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,image/svg+xml,*/*;q=0.8',
             'Accept-Encoding': 'identity',
             'Connection': 'close',
-        }, method='GET')
+        }
+        if referer:
+            try:
+                request_headers['Referer'] = validate_url(referer)
+            except ValueError:
+                pass
+        request = Request(current_url, headers=request_headers, method='GET')
         try:
             response = _proxy_opener.open(request, timeout=REQUEST_TIMEOUT)
         except HTTPError as error:
@@ -194,7 +200,8 @@ def _resource_url(url, base_url):
         absolute = validate_url(absolute)
     except ValueError:
         return ''
-    return '/api/resource?url=' + quote(absolute, safe='')
+    referer = validate_url(base_url)
+    return '/api/resource?url=' + quote(absolute, safe='') + '&referer=' + quote(referer, safe='')
 
 
 def _rewrite_css(css, base_url):
@@ -240,28 +247,6 @@ class SanitizingHTMLParser(HTMLParser):
             self.in_title = True
 
         values = dict(attrs)
-
-        if tag in ('img', 'source'):
-            if not values.get('src'):
-                for lazy_name in (
-                    'data-src',
-                    'data-lazy-src',
-                    'data-original',
-                    'data-original-src',
-                    'data-image-src',
-                ):
-                    if values.get(lazy_name):
-                        attrs = list(attrs) + [('src', values[lazy_name])]
-                        values['src'] = values[lazy_name]
-                        break
-
-            if not values.get('srcset'):
-                for lazy_name in ('data-srcset', 'data-lazy-srcset'):
-                    if values.get(lazy_name):
-                        attrs = list(attrs) + [('srcset', values[lazy_name])]
-                        values['srcset'] = values[lazy_name]
-                        break
-
         if tag == 'base':
             base_href = values.get('href')
             if base_href:
@@ -282,9 +267,7 @@ class SanitizingHTMLParser(HTMLParser):
             if name.startswith('on') or name in {
                     'srcdoc', 'action', 'formaction', 'integrity', 'nonce', 'background',
                     'cite', 'longdesc', 'manifest', 'ping', 'profile', 'xlink:href',
-                    'data-technetium-url', 'data-src', 'data-lazy-src',
-                    'data-original', 'data-original-src', 'data-image-src',
-                    'data-srcset', 'data-lazy-srcset'}:
+                    'data-technetium-url'}:
                 continue
             if name == 'style':
                 safe_attrs.append((name, _rewrite_css(value, self.base_url)))
@@ -415,7 +398,11 @@ class FrontendRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == '/api/browse':
             self._browse(parse_qs(parsed.query).get('url', [''])[0])
         elif parsed.path == '/api/resource':
-            self._resource(parse_qs(parsed.query).get('url', [''])[0])
+            query = parse_qs(parsed.query)
+            self._resource(
+                query.get('url', [''])[0],
+                query.get('referer', [''])[0],
+            )
         elif parsed.path == '/api/debug/logs':
             try:
                 limit = int(parse_qs(parsed.query).get('limit', ['100'])[0])
@@ -488,14 +475,15 @@ class FrontendRequestHandler(BaseHTTPRequestHandler):
                 'page', final_url, status, content_type,
                 (time.perf_counter() - started) * 1000, debug_error)
 
-    def _resource(self, url):
+    def _resource(self, url, referer=None):
         started = time.perf_counter()
         final_url = url
         status = None
         content_type = None
         debug_error = None
         try:
-            final_url, status, headers, body = _read_response(url, MAX_RESOURCE_BYTES)
+            final_url, status, headers, body = _read_response(
+                url, MAX_RESOURCE_BYTES, referer)
             content_type = headers.get('Content-Type', '').split(';', 1)[0].strip().lower()
             if not (content_type.startswith('image/')
                     or content_type == 'text/css'
