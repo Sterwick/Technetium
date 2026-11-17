@@ -240,6 +240,28 @@ class SanitizingHTMLParser(HTMLParser):
             self.in_title = True
 
         values = dict(attrs)
+
+        if tag in ('img', 'source'):
+            if not values.get('src'):
+                for lazy_name in (
+                    'data-src',
+                    'data-lazy-src',
+                    'data-original',
+                    'data-original-src',
+                    'data-image-src',
+                ):
+                    if values.get(lazy_name):
+                        attrs = list(attrs) + [('src', values[lazy_name])]
+                        values['src'] = values[lazy_name]
+                        break
+
+            if not values.get('srcset'):
+                for lazy_name in ('data-srcset', 'data-lazy-srcset'):
+                    if values.get(lazy_name):
+                        attrs = list(attrs) + [('srcset', values[lazy_name])]
+                        values['srcset'] = values[lazy_name]
+                        break
+
         if tag == 'base':
             base_href = values.get('href')
             if base_href:
@@ -260,7 +282,9 @@ class SanitizingHTMLParser(HTMLParser):
             if name.startswith('on') or name in {
                     'srcdoc', 'action', 'formaction', 'integrity', 'nonce', 'background',
                     'cite', 'longdesc', 'manifest', 'ping', 'profile', 'xlink:href',
-                    'data-technetium-url'}:
+                    'data-technetium-url', 'data-src', 'data-lazy-src',
+                    'data-original', 'data-original-src', 'data-image-src',
+                    'data-srcset', 'data-lazy-srcset'}:
                 continue
             if name == 'style':
                 safe_attrs.append((name, _rewrite_css(value, self.base_url)))
@@ -517,9 +541,9 @@ class FrontendRequestHandler(BaseHTTPRequestHandler):
         headers = {}
         if target.name == 'index.html':
             headers['Content-Security-Policy'] = (
-    "default-src 'self'; frame-src 'self'; img-src 'self' data:; "
-    "style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; "
-    "object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+                "default-src 'self'; frame-src 'self'; img-src 'self' data:; "
+                "style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; "
+                "object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
             headers['Referrer-Policy'] = 'no-referrer'
         self._send(200, body, content_type + ('; charset=utf-8' if content_type.startswith('text/') else ''), headers)
 
