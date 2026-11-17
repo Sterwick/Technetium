@@ -1,0 +1,8 @@
+MAX_HEADER_SIZE = 65536
+
+SUPPORTED_HTTP_VERSIONS = (
+    "HTTP/1.0",
+    "HTTP/1.1",
+)
+
+HEADER_ENCODING = "latin-1"
