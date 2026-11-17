@@ -1,15 +1,4 @@
-const bridgeScript = `<script>
-window.addEventListener("click", function (event) {
-  const link = event.target instanceof Element
-    ? event.target.closest("a[data-technetium-url]")
-    : null;
-  if (!link) return;
-  const url = new URL(link.dataset.technetiumUrl);
-  if (url.protocol !== "http:" && url.protocol !== "https:") return;
-  event.preventDefault();
-  parent.postMessage({ type: "technetium:navigate", url: url.href }, "*");
-});
-<\/script>`;
+const bridgeScript = `<script defer src="${location.origin}/js/page-bridge.js"></script>`;
 
 export function renderPage(frame, pageHtml) {
   const policy = [
@@ -18,7 +7,7 @@ export function renderPage(frame, pageHtml) {
     `style-src 'unsafe-inline' ${location.origin}`,
     `font-src ${location.origin} data:`,
     `media-src ${location.origin}`,
-    "script-src 'unsafe-inline'",
+    `script-src ${location.origin}`,
     "connect-src 'none'",
     "object-src 'none'",
     "frame-src 'none'",

@@ -8,10 +8,14 @@ from pathlib import Path
 import re
 import socket
 from functools import lru_cache
+import threading
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from core import extract_metadata
 
 
 HOST = '127.0.0.1'
@@ -22,6 +26,7 @@ REQUEST_TIMEOUT = 20
 MAX_PAGE_BYTES = 5 * 1024 * 1024
 MAX_RESOURCE_BYTES = 12 * 1024 * 1024
 MAX_REDIRECTS = 8
+MAX_DEBUG_ENTRIES = 200
 PUBLIC_PORTS = {80, 443}
 
 MIME_TYPES = {
@@ -34,7 +39,51 @@ MIME_TYPES = {
 _css_url_pattern = re.compile(r'url\(\s*(["\']?)(.*?)\1\s*\)', re.IGNORECASE)
 _css_import_pattern = re.compile(r'@import\s+(["\'])(.*?)\1', re.IGNORECASE)
 _unsafe_css_pattern = re.compile(
-    r'expression\s*\(|-moz-binding\s*:|behavior\s*:|javascript\s*:', re.IGNORECASE)
+    r'expression\s*\(|-moz-binding\s*:|(?:^|[;{])\s*behavior\s*:|javascript\s*:', re.IGNORECASE)
+_debug_entries = []
+_debug_lock = threading.Lock()
+
+
+def _redact_debug_url(url):
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return '<invalid URL>'
+    if hostname is None:
+        return '<invalid URL>'
+    host = '[' + hostname + ']' if ':' in hostname else hostname
+    netloc = host + (':' + str(port) if port is not None else '')
+    return urlunsplit((
+        parsed.scheme,
+        netloc,
+        parsed.path,
+        '[redacted]' if parsed.query else '',
+        '',
+    ))
+
+
+def _record_debug_entry(kind, url, status, content_type, duration_ms, error=None):
+    entry = {
+        'time': time.strftime('%H:%M:%S'),
+        'method': 'GET',
+        'kind': kind,
+        'url': _redact_debug_url(url),
+        'status': status,
+        'content_type': content_type,
+        'duration_ms': round(duration_ms, 1),
+    }
+    if error:
+        entry['error'] = error
+    with _debug_lock:
+        _debug_entries.append(entry)
+        del _debug_entries[:-MAX_DEBUG_ENTRIES]
+
+
+def _get_debug_entries(limit=100):
+    with _debug_lock:
+        return list(_debug_entries[-limit:])
 
 
 class TechnetiumProxyHandler(ProxyHandler):
@@ -191,6 +240,14 @@ class SanitizingHTMLParser(HTMLParser):
             self.in_title = True
 
         values = dict(attrs)
+        if tag == 'base':
+            base_href = values.get('href')
+            if base_href:
+                try:
+                    self.base_url = validate_url(urljoin(self.base_url, base_href))
+                except ValueError:
+                    pass
+            return
         if tag == 'link':
             rel = (values.get('rel') or '').lower().split()
             if 'stylesheet' not in rel:
@@ -335,14 +392,27 @@ class FrontendRequestHandler(BaseHTTPRequestHandler):
             self._browse(parse_qs(parsed.query).get('url', [''])[0])
         elif parsed.path == '/api/resource':
             self._resource(parse_qs(parsed.query).get('url', [''])[0])
+        elif parsed.path == '/api/debug/logs':
+            try:
+                limit = int(parse_qs(parsed.query).get('limit', ['100'])[0])
+            except ValueError:
+                self._send_json(400, {'error': 'The log limit must be an integer.'})
+                return
+            self._send_json(200, {'entries': _get_debug_entries(max(1, min(limit, 200)))})
         else:
             self._static_file(parsed.path)
 
     def _browse(self, url):
+        started = time.perf_counter()
+        final_url = url
+        status = None
+        content_type = None
+        debug_error = None
         try:
             final_url, status, headers, body = _read_response(url, MAX_PAGE_BYTES)
             content_type = headers.get('Content-Type', 'application/octet-stream')
             if 'text/html' not in content_type.lower():
+                debug_error = 'Destination did not return HTML'
                 self._send_json(415, {
                     'url': final_url,
                     'status': status,
@@ -350,7 +420,23 @@ class FrontendRequestHandler(BaseHTTPRequestHandler):
                     'error': 'This destination did not return an HTML page.',
                 })
                 return
+            metadata = extract_metadata(body, content_type, final_url)
             page_html, links, title = sanitize_html(_decode_body(body, content_type), final_url)
+            link_urls = {link['url'] for link in links}
+            for link_url in metadata.links:
+                try:
+                    safe_url = validate_url(link_url)
+                except ValueError:
+                    continue
+                if safe_url not in link_urls:
+                    links.append({'text': '', 'url': safe_url})
+                    link_urls.add(safe_url)
+            canonical_url = None
+            if metadata.canonical_url:
+                try:
+                    canonical_url = validate_url(metadata.canonical_url)
+                except ValueError:
+                    pass
             safe_headers = {
                 name.lower(): headers.get(name)
                 for name in ('Content-Type', 'Last-Modified', 'ETag')
@@ -361,16 +447,29 @@ class FrontendRequestHandler(BaseHTTPRequestHandler):
                 'status': status,
                 'content_type': content_type.split(';', 1)[0].strip(),
                 'headers': safe_headers,
-                'title': title,
+                'title': title or metadata.title,
+                'description': metadata.description,
+                'canonical_url': canonical_url,
                 'html': page_html,
                 'links': links,
             })
         except ValueError as error:
+            debug_error = str(error)
             self._send_json(400, {'error': str(error)})
         except RuntimeError as error:
+            debug_error = str(error)
             self._send_json(502, {'error': str(error)})
+        finally:
+            _record_debug_entry(
+                'page', final_url, status, content_type,
+                (time.perf_counter() - started) * 1000, debug_error)
 
     def _resource(self, url):
+        started = time.perf_counter()
+        final_url = url
+        status = None
+        content_type = None
+        debug_error = None
         try:
             final_url, status, headers, body = _read_response(url, MAX_RESOURCE_BYTES)
             content_type = headers.get('Content-Type', '').split(';', 1)[0].strip().lower()
@@ -379,19 +478,29 @@ class FrontendRequestHandler(BaseHTTPRequestHandler):
                     or content_type.startswith('font/')
                     or content_type in ('application/font-woff', 'application/font-woff2',
                                         'application/vnd.ms-fontobject')):
+                debug_error = 'Unsupported resource type'
                 self._send_json(415, {'error': 'This resource type is not supported.'})
                 return
             if status < 200 or status >= 300:
+                debug_error = 'Resource returned an unsuccessful status'
                 self._send_json(status, {'error': 'The resource could not be loaded.'})
                 return
             if content_type == 'text/css':
                 body = _rewrite_css(_decode_body(body, headers.get('Content-Type')), final_url).encode('utf-8')
                 content_type = 'text/css; charset=utf-8'
-            self._send(status, body, content_type)
+            self._send(status, body, content_type, {
+                'Access-Control-Allow-Origin': '*',
+            })
         except ValueError as error:
+            debug_error = str(error)
             self._send_json(400, {'error': str(error)})
         except RuntimeError as error:
+            debug_error = str(error)
             self._send_json(502, {'error': str(error)})
+        finally:
+            _record_debug_entry(
+                'resource', final_url, status, content_type,
+                (time.perf_counter() - started) * 1000, debug_error)
 
     def _static_file(self, request_path):
         relative = unquote(request_path).lstrip('/')

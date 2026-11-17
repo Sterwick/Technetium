@@ -1,5 +1,6 @@
 import { NavigationHistory, normalizeAddress } from "./navigation.js";
 import { renderPage, showError, showWelcome } from "./renderer.js";
+import { DeveloperTools } from "./debugger.js";
 
 const addressInput = document.querySelector("#address-input");
 const welcomeInput = document.querySelector("#welcome-input");
@@ -18,6 +19,7 @@ const currentAddress = document.querySelector("#current-address");
 const loadingBar = document.querySelector("#loading-bar");
 
 const history = new NavigationHistory();
+const developerTools = new DeveloperTools();
 let activeRequest = 0;
 
 function updateControls() {
@@ -42,10 +44,12 @@ async function navigate(value, mode = "push") {
   try {
     url = normalizeAddress(value);
   } catch (error) {
+    developerTools.log(`Address rejected: ${error.message}`, "error");
     showError(welcome, frame, errorView, "Check the website address", error.message);
     return;
   }
 
+  developerTools.log("Navigation requested");
   const requestId = ++activeRequest;
   welcome.hidden = true;
   errorView.hidden = true;
@@ -71,10 +75,13 @@ async function navigate(value, mode = "push") {
     else history.replace(finalUrl);
     setCurrentUrl(finalUrl);
     renderPage(frame, result.html);
+    developerTools.setPage(result);
+    developerTools.log(`Page loaded with HTTP ${result.status}`);
     statusLabel.textContent = `HTTP ${result.status}`;
     updateControls();
   } catch (error) {
     if (requestId !== activeRequest) return;
+    developerTools.log(`Navigation failed: ${error.message}`, "error");
     showError(
       welcome,
       frame,
@@ -128,7 +135,14 @@ window.addEventListener("message", (event) => {
       || typeof event.data.url !== "string") {
     return;
   }
-  navigate(event.data.url);
+  let destination;
+  try {
+    destination = new URL(event.data.url);
+  } catch {
+    return;
+  }
+  if (!["http:", "https:"].includes(destination.protocol)) return;
+  navigate(destination.href);
 });
 
 window.addEventListener("keydown", (event) => {

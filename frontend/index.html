@@ -24,6 +24,7 @@
         <button class="icon-button" id="refresh-button" type="button" aria-label="Refresh page" title="Refresh">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.6-2L20 12M4 12l2.8 5a7 7 0 0 0 11.6-2"/></svg>
         </button>
+        <button class="debug-toggle" id="debug-toggle" type="button" aria-expanded="false" aria-controls="debug-panel" title="Developer tools (Ctrl+Shift+D)">Dev</button>
         <form class="address-form" id="address-form" autocomplete="off">
           <span class="security-icon" aria-hidden="true">
             <svg viewBox="0 0 20 20"><path d="M5.5 8V6a4.5 4.5 0 0 1 9 0v2"/><rect x="4" y="8" width="12" height="9" rx="2"/><path d="M10 11v3"/></svg>
@@ -63,6 +64,41 @@
         <h2 id="error-title">Unable to reach this website</h2>
         <p id="error-message"></p>
         <button class="retry-button" id="retry-button" type="button">Try again</button>
+      </div>
+    </section>
+    <section class="debug-panel" id="debug-panel" aria-label="Developer tools" hidden>
+      <header class="debug-toolbar">
+        <div class="debug-heading">
+          <span class="debug-led" aria-hidden="true"></span>
+          <strong>Developer tools</strong>
+          <span class="debug-scope">LOCAL SESSION</span>
+        </div>
+        <div class="debug-actions">
+          <button type="button" class="debug-tab is-active" data-debug-tab="network">Network</button>
+          <button type="button" class="debug-tab" data-debug-tab="console">Console</button>
+          <button type="button" class="debug-tab" data-debug-tab="page">Page</button>
+          <button type="button" class="debug-close" id="debug-close" aria-label="Close developer tools">×</button>
+        </div>
+      </header>
+      <div class="debug-content">
+        <div class="debug-pane" id="debug-network-pane">
+          <div class="debug-network-header" aria-hidden="true">
+            <span>TYPE</span><span>STATUS</span><span>TIME</span><span>CONTENT TYPE</span><span>URL</span>
+          </div>
+          <div class="debug-network-list" id="debug-network-list">
+            <p class="debug-empty">Network requests will appear here.</p>
+          </div>
+        </div>
+        <div class="debug-pane debug-console" id="debug-console-pane" hidden>
+          <div id="debug-console-list" class="debug-console-list">
+            <p class="debug-empty">Navigation and frontend messages will appear here.</p>
+          </div>
+        </div>
+        <div class="debug-pane debug-page" id="debug-page-pane" hidden>
+          <dl id="debug-page-info">
+            <dt>Page</dt><dd>No page loaded</dd>
+          </dl>
+        </div>
       </div>
     </section>
   </main>
