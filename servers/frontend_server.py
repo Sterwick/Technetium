@@ -517,9 +517,9 @@ class FrontendRequestHandler(BaseHTTPRequestHandler):
         headers = {}
         if target.name == 'index.html':
             headers['Content-Security-Policy'] = (
-                "default-src 'self'; frame-src 'self'; img-src 'self' data:; "
-                "style-src 'self'; script-src 'self'; connect-src 'self'; "
-                "object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+    "default-src 'self'; frame-src 'self'; img-src 'self' data:; "
+    "style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; "
+    "object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
             headers['Referrer-Policy'] = 'no-referrer'
         self._send(200, body, content_type + ('; charset=utf-8' if content_type.startswith('text/') else ''), headers)
 
